@@ -1,13 +1,28 @@
-from typing import Any
+from typing import Any, Callable
 
 from frontend.api.client import APIClient
 
 
 class MessageService:
-    def __init__(self, access_token: str) -> None:
-        self.client = APIClient(access_token=access_token)
+    def __init__(
+        self,
+        access_token: str,
+        refresh_token: str | None = None,
+        on_token_refreshed: Callable[[str, str], None] | None = None,
+    ) -> None:
+        self.client = APIClient(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            on_token_refreshed=on_token_refreshed,
+        )
 
-    def get_messages(self, conversation_id: str, limit: int = 50, before_created_at: str | None = None, before_id: str | None = None) -> dict[str, Any]:
+    def get_messages(
+        self,
+        conversation_id: str,
+        limit: int = 50,
+        before_created_at: str | None = None,
+        before_id: str | None = None,
+    ) -> dict[str, Any]:
         return self.client.get_messages(conversation_id, limit, before_created_at, before_id)
 
     def send_message(self, conversation_id: str, content: str) -> dict[str, Any]:

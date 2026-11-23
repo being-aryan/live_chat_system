@@ -2,7 +2,7 @@ from typing import Any
 
 import streamlit as st
 
-from frontend.api.client import APIClient, APIError
+from frontend.api.client import APIError
 from frontend.components.chat_message import render_message
 from frontend.services.auth import AuthService
 from frontend.services.conversation import ConversationService
@@ -134,7 +134,31 @@ def _render_chat(
     members = conversation.get("members", [])
     st.caption(f"{len(members)} participant(s) · {conversation.get('conversation_type', 'conversation').title()}")
     st.markdown("</div>", unsafe_allow_html=True)
-    service = MessageService(access_token)
+    auth_service = AuthService(st.session_state)
+    refresh_token = st.session_state.get("refresh_token")
+    service = MessageService(
+        access_token,
+        refresh_token=refresh_token,
+        on_token_refreshed=auth_service.store_tokens,
+    )
+
+    if websocket_service:
+        events = websocket_service.drain_events()
+        relevant_events = {
+            "message.new",
+            "message.updated",
+            "message.deleted",
+            "message.delivered",
+            "message.read",
+        }
+        for event in events:
+            if event.get("type") == "auth.tokens_refreshed":
+                auth_service.store_tokens(
+                    event["access_token"],
+                    event["refresh_token"],
+                )
+            elif event.get("type") in relevant_events:
+                st.session_state["last_realtime_event"] = event.get("type")
 
     try:
         result = service.get_messages(conversation_id, limit=50)
@@ -143,20 +167,36 @@ def _render_chat(
         _show_error(exc)
         return
 
+    user_id = str(current_user.get("id", ""))
+    delivered_cache_key = f"delivered_msg_ids_{user_id}"
+    delivered_cache: set[str] = st.session_state.setdefault(delivered_cache_key, set())
+
     for message in messages:
-        render_message(message, str(current_user.get("id", "")))
-        if str(message.get("sender_id")) != str(current_user.get("id")) and message.get("id"):
+        render_message(message, user_id)
+        message_id = str(message.get("id", ""))
+        is_incoming = str(message.get("sender_id")) != user_id
+        is_not_delivered = not message.get("delivered_at")
+        if is_incoming and message_id and is_not_delivered and message_id not in delivered_cache:
             try:
-                service.mark_delivered(str(message["id"]))
+                service.mark_delivered(message_id)
+                delivered_cache.add(message_id)
             except APIError:
                 pass
 
-    unread_candidates = [m for m in messages if str(m.get("sender_id")) != str(current_user.get("id")) and m.get("id")]
+    unread_candidates = [
+        message
+        for message in messages
+        if str(message.get("sender_id")) != user_id and message.get("id")
+    ]
     if unread_candidates:
-        try:
-            service.mark_conversation_read(conversation_id, str(unread_candidates[-1]["id"]))
-        except APIError:
-            pass
+        latest_incoming_id = str(unread_candidates[-1]["id"])
+        last_read_key = f"last_read_{user_id}_{conversation_id}"
+        if st.session_state.get(last_read_key) != latest_incoming_id:
+            try:
+                service.mark_conversation_read(conversation_id, latest_incoming_id)
+                st.session_state[last_read_key] = latest_incoming_id
+            except APIError:
+                pass
 
     st.divider()
     with st.form(f"send_message_form_{conversation_id}", clear_on_submit=True):
@@ -198,7 +238,14 @@ def _render_chat(
                 except APIError as exc:
                     _show_error(exc)
 
-    _render_group_settings(ConversationService(access_token), conversation)
+    _render_group_settings(
+        ConversationService(
+            access_token,
+            refresh_token=refresh_token,
+            on_token_refreshed=auth_service.store_tokens,
+        ),
+        conversation,
+    )
     if websocket_service and not websocket_service.connected:
         st.caption("Real-time connection reconnecting. Messages also refresh when you interact with the chat.")
 
@@ -211,7 +258,11 @@ def render_dashboard(auth_service: AuthService) -> None:
         st.rerun()
         return
 
-    service = ConversationService(access_token)
+    service = ConversationService(
+        access_token,
+        refresh_token=st.session_state.get("refresh_token"),
+        on_token_refreshed=auth_service.store_tokens,
+    )
     with st.sidebar:
         st.title("💬 Live Chat")
         st.caption(user.get("username", "User"))
@@ -272,10 +323,4 @@ def render_dashboard(auth_service: AuthService) -> None:
         st.rerun()
 
     websocket_service = st.session_state.get("websocket_service")
-    if websocket_service:
-        for event in websocket_service.drain_events():
-            event_type = event.get("type")
-            if event_type in {"message.new", "message.updated", "message.deleted"}:
-                st.session_state["last_realtime_event"] = event_type
-
     _render_chat(access_token, user, conversation, websocket_service)

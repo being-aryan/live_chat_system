@@ -1,8 +1,11 @@
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
 from frontend.config import API_V1_URL
+
+
+TokenRefreshCallback = Callable[[str, str], None]
 
 
 class APIError(Exception):
@@ -17,18 +20,61 @@ class APIClient:
         self,
         base_url: str = API_V1_URL,
         access_token: str | None = None,
+        refresh_token: str | None = None,
+        on_token_refreshed: TokenRefreshCallback | None = None,
         timeout: float = 15.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.on_token_refreshed = on_token_refreshed
         self.timeout = timeout
 
-    def _request(self, method: str, endpoint: str, **kwargs: Any) -> Any:
+    def set_access_token(self, token: str | None) -> None:
+        self.access_token = token
+
+    def set_tokens(self, access_token: str, refresh_token: str) -> None:
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        if self.on_token_refreshed:
+            self.on_token_refreshed(access_token, refresh_token)
+
+    def _refresh_after_unauthorized(self) -> bool:
+        if not self.refresh_token:
+            return False
+        try:
+            response = httpx.post(
+                f"{self.base_url}/auth/refresh",
+                json={"refresh_token": self.refresh_token},
+                headers={"Accept": "application/json"},
+                timeout=min(self.timeout, 10.0),
+            )
+            if not response.is_success:
+                return False
+            tokens = response.json()
+            access_token = tokens.get("access_token")
+            refresh_token = tokens.get("refresh_token")
+            if not access_token or not refresh_token:
+                return False
+            self.set_tokens(access_token, refresh_token)
+            return True
+        except (httpx.RequestError, ValueError, TypeError):
+            return False
+
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        _is_retry: bool = False,
+        **kwargs: Any,
+    ) -> Any:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         headers = {"Accept": "application/json"}
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
         headers.update(kwargs.pop("headers", {}))
+
         try:
             response = httpx.request(
                 method,
@@ -42,10 +88,27 @@ class APIClient:
         except httpx.RequestError as exc:
             raise APIError(503, "Unable to connect to the backend server.") from exc
 
+        if (
+            response.status_code == 401
+            and not _is_retry
+            and endpoint.rstrip("/") != "/auth/refresh"
+            and self._refresh_after_unauthorized()
+        ):
+            retry_headers = dict(headers)
+            retry_headers["Authorization"] = f"Bearer {self.access_token}"
+            return self._request(
+                method,
+                endpoint,
+                _is_retry=True,
+                headers=retry_headers,
+                **kwargs,
+            )
+
         try:
             data = response.json()
         except ValueError:
             data = response.text
+
         if not response.is_success:
             detail = data.get("detail", data) if isinstance(data, dict) else data
             raise APIError(response.status_code, detail)
@@ -93,20 +156,13 @@ class APIClient:
         return self._request("POST", "/conversations/direct", json={"other_user_id": other_user_id})
 
     def create_group_conversation(self, name: str, member_ids: list[str]) -> dict[str, Any]:
-        return self._request(
-            "POST", "/conversations/groups",
-            json={"name": name, "member_ids": member_ids},
-        )
+        return self._request("POST", "/conversations/groups", json={"name": name, "member_ids": member_ids})
 
     def rename_group(self, conversation_id: str, name: str) -> dict[str, Any]:
-        return self._request(
-            "PATCH", f"/conversations/{conversation_id}/group-name", json={"name": name}
-        )
+        return self._request("PATCH", f"/conversations/{conversation_id}/group-name", json={"name": name})
 
     def add_group_member(self, conversation_id: str, user_id: str) -> dict[str, Any]:
-        return self._request(
-            "POST", f"/conversations/{conversation_id}/members", json={"user_id": user_id}
-        )
+        return self._request("POST", f"/conversations/{conversation_id}/members", json={"user_id": user_id})
 
     def remove_group_member(self, conversation_id: str, user_id: str) -> dict[str, Any]:
         return self._request("DELETE", f"/conversations/{conversation_id}/members/{user_id}")
@@ -115,9 +171,7 @@ class APIClient:
         return self._request("POST", f"/conversations/{conversation_id}/leave")
 
     def search_users(self, query: str, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
-        return self._request(
-            "GET", "/users/search", params={"q": query, "limit": limit, "offset": offset}
-        )
+        return self._request("GET", "/users/search", params={"q": query, "limit": limit, "offset": offset})
 
     def get_presence(self, user_id: str) -> dict[str, Any]:
         return self._request("GET", f"/users/{user_id}/presence")
@@ -137,9 +191,7 @@ class APIClient:
         return self._request("GET", f"/conversations/{conversation_id}/messages", params=params)
 
     def send_message(self, conversation_id: str, content: str) -> dict[str, Any]:
-        return self._request(
-            "POST", f"/conversations/{conversation_id}/messages", json={"content": content}
-        )
+        return self._request("POST", f"/conversations/{conversation_id}/messages", json={"content": content})
 
     def update_message(self, message_id: str, content: str) -> dict[str, Any]:
         return self._request("PATCH", f"/conversations/messages/{message_id}", json={"content": content})

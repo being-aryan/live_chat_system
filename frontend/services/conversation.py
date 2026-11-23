@@ -1,11 +1,20 @@
-from typing import Any
+from typing import Any, Callable
 
 from frontend.api.client import APIClient
 
 
 class ConversationService:
-    def __init__(self, access_token: str) -> None:
-        self.client = APIClient(access_token=access_token)
+    def __init__(
+        self,
+        access_token: str,
+        refresh_token: str | None = None,
+        on_token_refreshed: Callable[[str, str], None] | None = None,
+    ) -> None:
+        self.client = APIClient(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            on_token_refreshed=on_token_refreshed,
+        )
 
     def get_inbox(self) -> dict[str, Any]:
         return self.client.get_conversation_inbox()

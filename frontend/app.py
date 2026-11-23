@@ -1,11 +1,11 @@
-
 import sys
 from pathlib import Path
+
+import streamlit as st
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-    
-import streamlit as st
 
 from frontend.config import APP_ICON, APP_TITLE
 from frontend.pages.dashboard import render_dashboard
@@ -48,12 +48,18 @@ if auth_service.is_authenticated():
 
 if auth_service.is_authenticated():
     if "websocket_service" not in st.session_state:
-        websocket_service = WebSocketService(st.session_state["access_token"])
+        websocket_service = WebSocketService(
+            st.session_state["access_token"],
+            st.session_state["refresh_token"],
+        )
         websocket_service.start()
         st.session_state["websocket_service"] = websocket_service
     elif st.session_state["websocket_service"].access_token != st.session_state["access_token"]:
         st.session_state["websocket_service"].stop()
-        websocket_service = WebSocketService(st.session_state["access_token"])
+        websocket_service = WebSocketService(
+            st.session_state["access_token"],
+            st.session_state["refresh_token"],
+        )
         websocket_service.start()
         st.session_state["websocket_service"] = websocket_service
 else:
