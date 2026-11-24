@@ -53,7 +53,6 @@ class ChatAPIClient:
         except Exception as exc:
             raise APIError(500, f"Network error: {str(exc)}")
 
-        # Handle automatic token refresh on 401 Unauthorized
         if response.status_code == 401 and self.refresh_token and not kwargs.get("_is_retry"):
             if self._attempt_token_refresh():
                 headers["Authorization"] = f"Bearer {self.access_token}"
@@ -90,20 +89,11 @@ class ChatAPIClient:
             pass
         return False
 
-    # ---------------- Auth Endpoints ----------------
     def register(self, username: str, email: str, password: str) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/auth/register",
-            json={"username": username, "email": email, "password": password},
-        )
+        return self._request("POST", "/auth/register", json={"username": username, "email": email, "password": password})
 
     def login(self, email: str, password: str) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/auth/login",
-            json={"email": email, "password": password},
-        )
+        return self._request("POST", "/auth/login", json={"email": email, "password": password})
 
     def get_me(self) -> dict[str, Any]:
         return self._request("GET", "/auth/me")
@@ -114,15 +104,18 @@ class ChatAPIClient:
         except Exception:
             pass
 
-    # ---------------- User Search ----------------
     def search_users(self, query: str, limit: int = 15) -> list[dict[str, Any]]:
-        return self._request(
-            "GET",
-            "/users/search",
-            params={"q": query, "limit": limit},
-        )
+        return self._request("GET", "/users/search", params={"q": query, "limit": limit})
 
-    # ---------------- Conversation Endpoints ----------------
+    def get_user_by_id(self, user_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/users/{user_id}")
+
+    def get_presence(self, user_id: str) -> dict[str, Any]:
+        try:
+            return self._request("GET", f"/users/{user_id}/presence")
+        except Exception:
+            return {"user_id": user_id, "is_online": False, "last_seen": None}
+
     def get_inbox(self) -> list[dict[str, Any]]:
         data = self._request("GET", "/conversations/inbox")
         return data.get("conversations", []) if isinstance(data, dict) else []
@@ -131,44 +124,21 @@ class ChatAPIClient:
         return self._request("GET", f"/conversations/{conversation_id}")
 
     def create_direct_conversation(self, other_user_id: str) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/conversations/direct",
-            json={"other_user_id": other_user_id},
-        )
+        return self._request("POST", "/conversations/direct", json={"other_user_id": other_user_id})
 
     def create_group_conversation(self, name: str, member_ids: list[str]) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/conversations/groups",
-            json={"name": name, "member_ids": member_ids},
-        )
+        return self._request("POST", "/conversations/groups", json={"name": name, "member_ids": member_ids})
 
     def rename_group(self, conversation_id: str, new_name: str) -> dict[str, Any]:
-        return self._request(
-            "PATCH",
-            f"/conversations/{conversation_id}/group-name",
-            json={"name": new_name},
-        )
+        return self._request("PATCH", f"/conversations/{conversation_id}/group-name", json={"name": new_name})
 
     def add_group_member(self, conversation_id: str, user_id: str) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            f"/conversations/{conversation_id}/members",
-            json={"user_id": user_id},
-        )
+        return self._request("POST", f"/conversations/{conversation_id}/members", json={"user_id": user_id})
 
     def leave_group(self, conversation_id: str) -> dict[str, Any]:
         return self._request("POST", f"/conversations/{conversation_id}/leave")
 
-    # ---------------- Message Endpoints ----------------
-    def get_messages(
-        self,
-        conversation_id: str,
-        limit: int = 50,
-        before_created_at: Optional[str] = None,
-        before_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    def get_messages(self, conversation_id: str, limit: int = 50, before_created_at: Optional[str] = None, before_id: Optional[str] = None) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit}
         if before_created_at and before_id:
             params["before_created_at"] = before_created_at
@@ -176,18 +146,23 @@ class ChatAPIClient:
         return self._request("GET", f"/conversations/{conversation_id}/messages", params=params)
 
     def send_message(self, conversation_id: str, content: str) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            f"/conversations/{conversation_id}/messages",
-            json={"content": content},
-        )
+        return self._request("POST", f"/conversations/{conversation_id}/messages", json={"content": content})
 
     def mark_conversation_read(self, conversation_id: str, last_read_message_id: str) -> None:
         try:
-            self._request(
-                "POST",
-                f"/conversations/{conversation_id}/read",
-                json={"last_read_message_id": last_read_message_id},
-            )
+            self._request("POST", f"/conversations/{conversation_id}/read", json={"last_read_message_id": last_read_message_id})
         except Exception:
             pass
+
+    def set_typing(self, conversation_id: str, is_typing: bool = True) -> None:
+        try:
+            self._request("POST", f"/conversations/{conversation_id}/typing", json={"is_typing": is_typing})
+        except Exception:
+            pass
+
+    def get_typing(self, conversation_id: str) -> list[str]:
+        try:
+            data = self._request("GET", f"/conversations/{conversation_id}/typing")
+            return data.get("typing_users", []) if isinstance(data, dict) else []
+        except Exception:
+            return []
