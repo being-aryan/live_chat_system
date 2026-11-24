@@ -1,7 +1,10 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database.redis import redis_client
 
 from app.core.dependencies import get_current_user
 from app.database.dependencies import get_db
@@ -12,9 +15,9 @@ from app.repositories.conversation_repository import (
 )
 from app.schemas.conversation import (
     ConversationDetailResponse,
-    ConversationInboxResponse,
     ConversationResponse,
     DirectConversationCreate,
+    ConversationInboxResponse,
     GroupConversationCreate,
     GroupMemberAdd,
     GroupNameUpdate,
@@ -247,3 +250,37 @@ async def get_conversation_details(
         )
 
     return conversation
+
+
+class TypingRequest(BaseModel):
+    is_typing: bool = True
+
+
+@router.post("/{conversation_id}/typing")
+async def send_typing_indicator(
+    conversation_id: UUID,
+    payload: TypingRequest,
+    current_user: User = Depends(get_current_user),
+):
+    key = f"typing:{conversation_id}:{current_user.id}"
+    if payload.is_typing:
+        await redis_client.set(key, current_user.username, ex=4)
+    else:
+        await redis_client.delete(key)
+    return {"status": "ok"}
+
+
+@router.get("/{conversation_id}/typing")
+async def get_typing_indicator(
+    conversation_id: UUID,
+    current_user: User = Depends(get_current_user),
+):
+    keys = await redis_client.keys(f"typing:{conversation_id}:*")
+    typing_users = []
+    for k in keys:
+        uid = k.split(":")[-1]
+        if uid != str(current_user.id):
+            name = await redis_client.get(k)
+            if name:
+                typing_users.append(name)
+    return {"typing_users": typing_users}

@@ -2,9 +2,9 @@ from fastapi import APIRouter
 
 from app.routers import conversations, message_receipt_router
 from app.routers.auth import router as auth_router
+from app.routers.user_router import router as user_router
 from app.routers.message_router import router as message_router
 from app.routers.presence_router import router as presence_router
-from app.routers.user_router import router as user_router
 from app.routers.websocket_router import router as websocket_router
 from app.routers.websocket_ticket_router import (
     router as websocket_ticket_router,

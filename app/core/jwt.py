@@ -1,3 +1,4 @@
+
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -14,7 +15,9 @@ def create_access_token(
 ) -> str:
     issued_at = datetime.now(UTC)
 
-    expires_at = issued_at + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expires_at = issued_at + timedelta(
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
 
     payload = {
         "sub": subject,

@@ -70,3 +70,8 @@ class ConversationMember(Base):
     user: Mapped[User] = relationship(
         back_populates="memberships",
     )
+
+    @property
+    def username(self) -> str | None:
+        return self.user.username if self.user else None
+

@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -31,7 +32,9 @@ async def cleanup_stale_presence() -> None:
         try:
             await PresenceManager.cleanup_expired_users()
 
-            processed_users = await PresenceManager.process_pending_offline_users()
+            processed_users = (
+                await PresenceManager.process_pending_offline_users()
+            )
 
             if processed_users:
                 logger.info(
@@ -43,7 +46,9 @@ async def cleanup_stale_presence() -> None:
             logger.exception("Stale presence cleanup failed")
 
         except SQLAlchemyError:
-            logger.exception("Database error during stale presence cleanup")
+            logger.exception(
+                "Database error during stale presence cleanup"
+            )
 
         await asyncio.sleep(PRESENCE_CLEANUP_INTERVAL)
 

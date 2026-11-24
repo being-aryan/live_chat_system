@@ -20,6 +20,7 @@ class ConversationResponse(BaseModel):
 
 class ConversationMemberResponse(BaseModel):
     user_id: UUID
+    username: str | None = None
     joined_at: datetime
     role: str
 
@@ -38,6 +39,8 @@ class ConversationListResponse(BaseModel):
 
 class ConversationInboxItem(BaseModel):
     conversation: ConversationDetailResponse
+    other_user_id: UUID | None = None
+    other_username: str | None = None
     last_message_id: UUID | None = None
     last_message_content: str | None = None
     last_message_created_at: datetime | None = None

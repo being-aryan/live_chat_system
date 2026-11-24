@@ -87,3 +87,16 @@ class Message(Base):
         back_populates="message",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def sender_username(self) -> str | None:
+        return self.sender.username if self.sender else None
+
+    @property
+    def is_delivered(self) -> bool:
+        return any(r.delivered_at is not None for r in self.receipts) if self.receipts else False
+
+    @property
+    def is_read(self) -> bool:
+        return any(r.read_at is not None for r in self.receipts) if self.receipts else False
+

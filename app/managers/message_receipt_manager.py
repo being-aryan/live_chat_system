@@ -2,8 +2,10 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select, update
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.managers.presence_manager import PresenceManager
 from app.models.message import Message
 from app.models.message_receipt import MessageReceipt
 from app.repositories.conversation_repository import (
@@ -29,7 +31,9 @@ class MessageReceiptManager:
                 conversation_id,
                 current_user_id,
             ):
-                raise PermissionError("You are not a member of this conversation")
+                raise PermissionError(
+                    "You are not a member of this conversation"
+                )
 
             anchor_result = await db.execute(
                 select(Message.created_at).where(
@@ -69,6 +73,7 @@ class MessageReceiptManager:
                 )
             )
             await db.commit()
+            await PresenceManager.record_user_active(current_user_id)
             return result.rowcount or 0
         except Exception:
             await db.rollback()

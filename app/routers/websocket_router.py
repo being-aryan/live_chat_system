@@ -134,9 +134,9 @@ async def handle_message_send(
                 if member.user_id != user_id
             ]
 
-            message_data = MessageResponse.model_validate(message).model_dump(
-                mode="json"
-            )
+            message_data = MessageResponse.model_validate(
+                message
+            ).model_dump(mode="json")
 
         await websocket.send_json(
             {
@@ -209,10 +209,12 @@ async def handle_message_receipt(
                     current_user_id=user_id,
                 )
             else:
-                receipt = await MessageReceiptManager.mark_message_delivered(
-                    db=db,
-                    message_id=message_id,
-                    current_user_id=user_id,
+                receipt = (
+                    await MessageReceiptManager.mark_message_delivered(
+                        db=db,
+                        message_id=message_id,
+                        current_user_id=user_id,
+                    )
                 )
 
             message = await MessageRepository.get_by_id(
@@ -222,9 +224,9 @@ async def handle_message_receipt(
 
             sender_id = message.sender_id
 
-            receipt_data = MessageReceiptResponse.model_validate(receipt).model_dump(
-                mode="json"
-            )
+            receipt_data = MessageReceiptResponse.model_validate(
+                receipt
+            ).model_dump(mode="json")
 
         await websocket.send_json(
             {
@@ -296,7 +298,9 @@ async def websocket_endpoint(websocket: WebSocket):
         ):
             await websocket.close(code=1008, reason="Authentication required")
             return
-        ticket_data = await WebSocketTicketManager.consume_ticket(auth_event["ticket"])
+        ticket_data = await WebSocketTicketManager.consume_ticket(
+            auth_event["ticket"]
+        )
     except TimeoutError:
         await websocket.close(code=1008, reason="Authentication timeout")
         return

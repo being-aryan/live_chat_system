@@ -1,3 +1,4 @@
+
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -26,7 +27,9 @@ class UserSessionRepository:
         token_hash: str,
         lock: bool = False,
     ) -> UserSession | None:
-        query = select(UserSession).where(UserSession.refresh_token_hash == token_hash)
+        query = select(UserSession).where(
+            UserSession.refresh_token_hash == token_hash
+        )
 
         if lock:
             query = query.with_for_update()
@@ -41,7 +44,9 @@ class UserSessionRepository:
         session_id: UUID,
         lock: bool = False,
     ) -> UserSession | None:
-        query = select(UserSession).where(UserSession.id == session_id)
+        query = select(UserSession).where(
+            UserSession.id == session_id
+        )
 
         if lock:
             query = query.with_for_update()

@@ -1,7 +1,8 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user
@@ -14,7 +15,6 @@ from app.schemas.message_receipt import (
     MessageReceiptListResponse,
     MessageReceiptResponse,
 )
-
 
 class BulkReadRequest(BaseModel):
     last_read_message_id: UUID

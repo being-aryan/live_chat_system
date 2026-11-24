@@ -28,7 +28,9 @@ class ConversationRepository:
     ) -> Conversation | None:
         result = await db.execute(
             select(Conversation)
-            .options(selectinload(Conversation.members))
+            .options(
+                selectinload(Conversation.members).selectinload(ConversationMember.user)
+            )
             .where(Conversation.id == conversation_id)
         )
         return result.scalar_one_or_none()
@@ -183,7 +185,9 @@ class ConversationRepository:
                 ConversationMember.conversation_id == Conversation.id,
             )
             .where(ConversationMember.user_id == user_id)
-            .options(selectinload(Conversation.members))
+            .options(
+                selectinload(Conversation.members).selectinload(ConversationMember.user)
+            )
             .order_by(
                 latest_message_created_at.desc().nullslast(),
                 Conversation.created_at.desc(),
@@ -192,16 +196,29 @@ class ConversationRepository:
             .limit(limit)
         )
         result = await db.execute(statement)
-        return [
-            {
-                "conversation": row[0],
-                "last_message_id": row.last_message_id,
-                "last_message_content": row.last_message_content,
-                "last_message_created_at": row.last_message_created_at,
-                "unread_count": row.unread_count or 0,
-            }
-            for row in result
-        ]
+        items = []
+        for row in result:
+            conv = row[0]
+            other_user_id = None
+            other_username = None
+            if conv.conversation_type == "direct":
+                for m in conv.members:
+                    if m.user_id != user_id:
+                        other_user_id = m.user_id
+                        other_username = m.user.username if m.user else None
+                        break
+            items.append(
+                {
+                    "conversation": conv,
+                    "other_user_id": other_user_id,
+                    "other_username": other_username,
+                    "last_message_id": row.last_message_id,
+                    "last_message_content": row.last_message_content,
+                    "last_message_created_at": row.last_message_created_at,
+                    "unread_count": row.unread_count or 0,
+                }
+            )
+        return items
 
     @staticmethod
     async def get_user_conversations(

@@ -101,9 +101,7 @@ class ConversationManager:
         member_ids: list[UUID],
     ) -> Conversation:
         if creator_id in member_ids:
-            member_ids = [
-                member_id for member_id in member_ids if member_id != creator_id
-            ]
+            member_ids = [member_id for member_id in member_ids if member_id != creator_id]
         if not member_ids:
             raise ValueError("A group must include at least one other member")
 
@@ -250,7 +248,9 @@ class ConversationManager:
         current_user_id: UUID,
     ) -> None:
         try:
-            conversation = await ConversationRepository.get_by_id(db, conversation_id)
+            conversation = await ConversationRepository.get_by_id(
+                db, conversation_id
+            )
             if conversation is None or conversation.conversation_type != "group":
                 raise ValueError("Group not found")
             member = await ConversationRepository.get_member(
@@ -260,8 +260,7 @@ class ConversationManager:
                 raise ValueError("You are not a member of this group")
             if member.role == "admin":
                 remaining = [
-                    item
-                    for item in conversation.members
+                    item for item in conversation.members
                     if item.user_id != current_user_id
                 ]
                 if remaining:

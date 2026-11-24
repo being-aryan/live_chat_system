@@ -1,8 +1,11 @@
+
 import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database.redis import redis_client
 
 from app.config import settings
 from app.core.jwt import create_access_token
@@ -10,7 +13,6 @@ from app.core.security import (
     generate_refresh_token,
     hash_refresh_token,
 )
-from app.database.redis import redis_client
 from app.models.user_session import UserSession
 from app.repositories.user_repository import UserRepository
 from app.repositories.user_session_repository import (
@@ -49,7 +51,8 @@ class SessionManager:
                 user_id=user_id,
                 family_id=uuid.uuid4(),
                 refresh_token_hash=refresh_token_hash,
-                expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+                expires_at=now
+                + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             )
 
             await UserSessionRepository.create(
@@ -89,11 +92,9 @@ class SessionManager:
 
             if session.revoked_at is not None:
                 if session.replaced_by_id is not None:
-                    family_sessions = (
-                        await UserSessionRepository.get_sessions_by_family(
-                            db=db,
-                            family_id=session.family_id,
-                        )
+                    family_sessions = await UserSessionRepository.get_sessions_by_family(
+                        db=db,
+                        family_id=session.family_id,
                     )
                     await UserSessionRepository.revoke_family(
                         db=db,
@@ -106,7 +107,8 @@ class SessionManager:
                     )
 
                     raise ValueError(
-                        "Refresh token reuse detected. Session family revoked."
+                        "Refresh token reuse detected. "
+                        "Session family revoked."
                     )
 
                 raise ValueError("Refresh token has been revoked")
@@ -143,8 +145,11 @@ class SessionManager:
             new_session = UserSession(
                 user_id=session.user_id,
                 family_id=session.family_id,
-                refresh_token_hash=hash_refresh_token(new_refresh_token),
-                expires_at=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+                refresh_token_hash=hash_refresh_token(
+                    new_refresh_token
+                ),
+                expires_at=now
+                + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
             )
 
             await UserSessionRepository.create(
@@ -177,7 +182,7 @@ class SessionManager:
     async def logout(
         db: AsyncSession,
         refresh_token: str,
-    ) -> None:
+    ) -> UUID | None:
         try:
             token_hash = hash_refresh_token(refresh_token)
 
@@ -189,8 +194,9 @@ class SessionManager:
 
             if session is None or session.revoked_at is not None:
                 await db.rollback()
-                return
+                return None
 
+            user_id = session.user_id
             await UserSessionRepository.revoke(
                 db=db,
                 session=session,
@@ -198,6 +204,7 @@ class SessionManager:
 
             await db.commit()
             await SessionManager._cache_revoked_sessions([session.id])
+            return user_id
 
         except Exception:
             if db.in_transaction():
@@ -214,9 +221,11 @@ class SessionManager:
                 db=db,
                 user_id=user_id,
             )
-            revoked_count = await UserSessionRepository.revoke_all_for_user(
-                db=db,
-                user_id=user_id,
+            revoked_count = (
+                await UserSessionRepository.revoke_all_for_user(
+                    db=db,
+                    user_id=user_id,
+                )
             )
 
             await db.commit()

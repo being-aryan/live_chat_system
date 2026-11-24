@@ -49,10 +49,13 @@ class MessageResponse(BaseModel):
     id: UUID
     conversation_id: UUID
     sender_id: UUID
+    sender_username: str | None = None
     content: str | None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
+    is_delivered: bool = False
+    is_read: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

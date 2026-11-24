@@ -9,14 +9,25 @@ from app.core.dependencies import get_current_user
 from app.database.dependencies import get_db
 from app.managers.presence_manager import PresenceManager
 from app.models.user import User
-from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.conversation_repository import ConversationRepository
 from app.schemas.presence import PresenceResponse
 
 router = APIRouter(
     prefix="/users",
     tags=["Presence"],
 )
+
+
+@router.post(
+    "/heartbeat",
+    status_code=status.HTTP_200_OK,
+)
+async def user_heartbeat(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    await PresenceManager.record_user_active(current_user.id)
+    return {"status": "ok"}
 
 
 @router.get(
@@ -28,11 +39,14 @@ async def get_user_presence(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
+    await PresenceManager.record_user_active(current_user.id)
     if user_id != current_user.id:
-        has_common_conversation = await ConversationRepository.have_common_conversation(
-            db=db,
-            first_user_id=current_user.id,
-            second_user_id=user_id,
+        has_common_conversation = (
+            await ConversationRepository.have_common_conversation(
+                db=db,
+                first_user_id=current_user.id,
+                second_user_id=user_id,
+            )
         )
         if not has_common_conversation:
             raise HTTPException(

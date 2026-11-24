@@ -71,7 +71,9 @@ async def create_message(
             content=payload.content,
         )
         try:
-            await publish_message_event(db, message, "message.new", current_user.id)
+            await publish_message_event(
+                db, message, "message.new", current_user.id
+            )
         except Exception:
             logger.exception(
                 "Message %s saved but realtime publish failed",
@@ -174,7 +176,9 @@ async def update_message(
             content=payload.content,
         )
         try:
-            await publish_message_event(db, message, "message.updated", current_user.id)
+            await publish_message_event(
+                db, message, "message.updated", current_user.id
+            )
         except Exception:
             logger.exception(
                 "Message %s updated but realtime publish failed",
@@ -215,7 +219,9 @@ async def delete_message(
             current_user_id=current_user.id,
         )
         try:
-            await publish_message_event(db, message, "message.deleted", current_user.id)
+            await publish_message_event(
+                db, message, "message.deleted", current_user.id
+            )
         except Exception:
             logger.exception(
                 "Message %s deleted but realtime publish failed",

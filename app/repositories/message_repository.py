@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.message import Message
 
@@ -41,12 +42,18 @@ class MessageRepository:
         before_created_at: datetime | None = None,
         before_id: UUID | None = None,
     ) -> list[Message]:
-        statement = select(Message).where(
-            Message.conversation_id == conversation_id,
+        statement = (
+            select(Message)
+            .options(selectinload(Message.sender), selectinload(Message.receipts))
+            .where(
+                Message.conversation_id == conversation_id,
+            )
         )
 
         if (before_created_at is None) != (before_id is None):
-            raise ValueError("Both before_created_at and before_id are required")
+            raise ValueError(
+                "Both before_created_at and before_id are required"
+            )
 
         if before_created_at is not None and before_id is not None:
             statement = statement.where(
@@ -60,9 +67,9 @@ class MessageRepository:
             )
 
         result = await db.execute(
-            statement.order_by(Message.created_at.desc(), Message.id.desc()).limit(
-                limit + 1
-            )
+            statement
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit + 1)
         )
         return list(result.scalars().all())
 

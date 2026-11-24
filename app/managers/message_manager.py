@@ -1,8 +1,10 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.managers.presence_manager import PresenceManager
 from app.models.message import Message
 from app.models.message_receipt import MessageReceipt
 from app.repositories.conversation_repository import (
@@ -79,6 +81,7 @@ class MessageManager:
 
             await db.commit()
             await db.refresh(message)
+            await PresenceManager.record_user_active(current_user_id)
 
             return message
 
@@ -115,6 +118,27 @@ class MessageManager:
 
             if not is_member:
                 raise PermissionError("You are not a member of this conversation")
+
+            # Mark incoming undelivered messages as delivered
+            now = datetime.now(UTC)
+            undelivered_msg_ids = (
+                select(Message.id)
+                .where(
+                    Message.conversation_id == conversation_id,
+                    Message.sender_id != current_user_id,
+                )
+            )
+            await db.execute(
+                update(MessageReceipt)
+                .where(
+                    MessageReceipt.user_id == current_user_id,
+                    MessageReceipt.delivered_at.is_(None),
+                    MessageReceipt.message_id.in_(undelivered_msg_ids),
+                )
+                .values(delivered_at=now)
+            )
+            await db.commit()
+            await PresenceManager.record_user_active(current_user_id)
 
             return await MessageRepository.get_conversation_messages(
                 db,
@@ -178,6 +202,7 @@ class MessageManager:
 
             await db.commit()
             await db.refresh(message)
+            await PresenceManager.record_user_active(current_user_id)
 
             return message
 
@@ -233,6 +258,7 @@ class MessageManager:
 
             await db.commit()
             await db.refresh(message)
+            await PresenceManager.record_user_active(current_user_id)
 
             return message
 

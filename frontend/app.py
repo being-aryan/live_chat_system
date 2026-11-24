@@ -2,15 +2,23 @@ import streamlit as st
 from datetime import datetime
 from api_client import ChatAPIClient, APIError
 
-st.set_page_config(page_title="Live Chat", page_icon="💬", layout="wide", initial_sidebar_state="expanded")
+# Page setup
+st.set_page_config(
+    page_title="Live Chat",
+    page_icon="💬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
+# ----------------- Session State Initialization -----------------
 st.session_state.setdefault("access_token", None)
 st.session_state.setdefault("refresh_token", None)
 st.session_state.setdefault("current_user", None)
 st.session_state.setdefault("active_conv_id", None)
 st.session_state.setdefault("active_conv_name", None)
 st.session_state.setdefault("active_other_user_id", None)
-st.session_state.setdefault("user_cache", {})
+st.session_state.setdefault("active_other_username", None)
+st.session_state.setdefault("user_cache", {})  # user_id -> username
 st.session_state.setdefault("last_read_cached", {})
 
 
@@ -57,15 +65,23 @@ def resolve_username(client: ChatAPIClient, user_id: str, default: str = "User")
         cache[user_id] = name
         return name
     except Exception:
+        if user_id == st.session_state.get("active_other_user_id"):
+            other_name = st.session_state.get("active_other_username")
+            if other_name:
+                cache[user_id] = other_name
+                return other_name
         return default
 
 
+# ----------------- Authentication Views -----------------
 def render_auth():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.title("💬 Live Chat System")
         st.caption("A fast, production-ready real-time communication platform.")
+
         tab_login, tab_register = st.tabs(["🔑 Login", "✨ Register"])
+
         client = get_client()
 
         with tab_login:
@@ -83,6 +99,7 @@ def render_auth():
                         tokens = client.login(email, password)
                         st.session_state["access_token"] = tokens["access_token"]
                         st.session_state["refresh_token"] = tokens["refresh_token"]
+
                         user_client = get_client()
                         me = user_client.get_me()
                         st.session_state["current_user"] = me
@@ -118,13 +135,16 @@ def render_auth():
                         st.error(f"Registration failed: {e.detail}")
 
 
+# ----------------- Logged In Main Application -----------------
 def render_main_app():
     client = get_client()
     user = st.session_state.get("current_user", {})
     my_id = str(user.get("id"))
     st.session_state["user_cache"][my_id] = user.get("username", "You")
 
+    # ===================== SIDEBAR =====================
     with st.sidebar:
+        # Profile Section
         st.subheader(f"🧑‍💻 {user.get('username', 'My Account')}")
         st.caption(f"{user.get('email', '')}")
 
@@ -139,8 +159,10 @@ def render_main_app():
 
         st.divider()
 
+        # Start New Chat Modal / Expander
         with st.expander("➕ New Conversation"):
             tab_direct, tab_group = st.tabs(["Direct Chat", "Group Chat"])
+
             with tab_direct:
                 search_q = st.text_input("Find User", placeholder="Type username...", key="direct_search")
                 if len(search_q.strip()) >= 2:
@@ -151,6 +173,7 @@ def render_main_app():
                         for u in results:
                             col_u, col_btn = st.columns([3, 1])
                             col_u.write(f"**{u['username']}**")
+                            # Cache username
                             st.session_state["user_cache"][str(u["id"])] = u["username"]
                             if col_btn.button("Chat", key=f"start_{u['id']}"):
                                 try:
@@ -158,6 +181,8 @@ def render_main_app():
                                     st.session_state["active_conv_id"] = str(conv["id"])
                                     st.session_state["active_conv_name"] = u["username"]
                                     st.session_state["active_other_user_id"] = str(u["id"])
+                                    st.session_state["active_other_username"] = u["username"]
+                                    st.session_state["user_cache"][str(u["id"])] = u["username"]
                                     st.rerun()
                                 except APIError as err:
                                     st.error(err.detail)
@@ -168,6 +193,7 @@ def render_main_app():
                 group_name = st.text_input("Group Name", placeholder="Engineering Team", key="grp_name")
                 member_search = st.text_input("Search Members", placeholder="Find user...", key="grp_search")
                 selected_ids = st.session_state.setdefault("new_group_selected_ids", [])
+
                 if len(member_search.strip()) >= 2:
                     try:
                         m_results = client.search_users(member_search.strip())
@@ -203,6 +229,8 @@ def render_main_app():
                             st.error(err.detail)
 
         st.divider()
+
+        # Inbox Conversations List
         st.markdown("### 💬 Conversations")
         try:
             inbox_items = client.get_inbox()
@@ -215,9 +243,12 @@ def render_main_app():
                 conv_type = conv.get("conversation_type", "direct")
                 unread = int(item.get("unread_count", 0))
 
+                # Identify other user in direct conversation
                 other_uid = str(item.get("other_user_id") or "")
                 other_uname = item.get("other_username")
+
                 if not other_uid and conv_type == "direct":
+                    # Fallback: find member who is not me
                     for m in conv.get("members", []):
                         mid = str(m.get("user_id"))
                         if mid != my_id:
@@ -225,12 +256,19 @@ def render_main_app():
                             other_uname = m.get("username")
                             break
 
+                # Resolve other username if missing
                 if conv_type == "direct" and not other_uname and other_uid:
                     other_uname = resolve_username(client, other_uid, "Direct Chat")
                 elif other_uname and other_uid:
                     st.session_state["user_cache"][other_uid] = other_uname
 
-                display_name = f"👥 {conv.get('name') or 'Group Chat'}" if conv_type == "group" else f"👤 {other_uname or 'Direct Chat'}"
+                # Display Name
+                if conv_type == "group":
+                    display_name = f"👥 {conv.get('name') or 'Group Chat'}"
+                else:
+                    display_name = f"👤 {other_uname or 'Direct Chat'}"
+
+                # Unread Badge
                 badge = f" 🔴 {unread}" if unread > 0 else ""
                 snippet = item.get("last_message_content") or "No messages yet"
                 if len(snippet) > 28:
@@ -238,21 +276,39 @@ def render_main_app():
 
                 btn_label = f"{display_name}{badge}\n↳ {snippet}"
                 is_selected = (conv_id == st.session_state.get("active_conv_id"))
-                if st.button(btn_label, key=f"inbox_{conv_id}", use_container_width=True, type="primary" if is_selected else "secondary"):
+
+                if st.button(
+                    btn_label,
+                    key=f"inbox_{conv_id}",
+                    use_container_width=True,
+                    type="primary" if is_selected else "secondary",
+                ):
                     st.session_state["active_conv_id"] = conv_id
                     st.session_state["active_conv_name"] = display_name
                     st.session_state["active_other_user_id"] = other_uid if conv_type == "direct" else None
+                    st.session_state["active_other_username"] = other_uname if conv_type == "direct" else None
                     st.rerun()
 
         except APIError as e:
             st.error(f"Failed to load conversations: {e.detail}")
 
+    # ===================== MAIN CHAT WORKSPACE =====================
     active_id = st.session_state.get("active_conv_id")
     if not active_id:
         st.title(f"👋 Welcome, {user.get('username', 'there')}!")
         st.info("👈 Select a conversation from the sidebar or click **➕ New Conversation** to begin.")
+        st.markdown(
+            """
+            ### Real-Time Features Enabled
+            - **Live User Presence**: Shows online status (`🟢 Online`) or last seen time.
+            - **Named Participants**: Direct chats show the person's real username.
+            - **Read & Delivery Receipts**: Track message status (`✓ Sent`, `✓✓ Delivered`, `👁️ Read`).
+            - **Typing Indicators**: Displays when the other user is typing.
+            """
+        )
         return
 
+    # Load Active Conversation Details
     try:
         conv_details = client.get_conversation_details(active_id)
     except APIError as e:
@@ -262,8 +318,9 @@ def render_main_app():
 
     conv_type = conv_details.get("conversation_type", "direct")
     members = conv_details.get("members", [])
-    other_user_id = st.session_state.get("active_other_user_id")
 
+    # Cache member usernames
+    other_user_id = st.session_state.get("active_other_user_id")
     for m in members:
         mid = str(m.get("user_id"))
         m_uname = m.get("username")
@@ -271,16 +328,25 @@ def render_main_app():
             st.session_state["user_cache"][mid] = m_uname
         if conv_type == "direct" and mid != my_id:
             other_user_id = mid
+            if m_uname:
+                st.session_state["active_other_username"] = m_uname
 
+    # Resolve header title
     if conv_type == "group":
         header_title = f"👥 {conv_details.get('name') or 'Group Chat'}"
         sub_caption = f"{len(members)} participant(s)"
     else:
         other_name = resolve_username(client, other_user_id, "Direct Chat") if other_user_id else "Direct Chat"
         header_title = f"👤 {other_name}"
-        presence = client.get_presence(other_user_id) if other_user_id else {}
-        sub_caption = "🟢 Online" if presence.get("is_online") else f"⚪ {format_last_seen(presence.get('last_seen'))}"
 
+        # Fetch Presence
+        presence = client.get_presence(other_user_id) if other_user_id else {}
+        if presence.get("is_online"):
+            sub_caption = "🟢 Online"
+        else:
+            sub_caption = f"⚪ {format_last_seen(presence.get('last_seen'))}"
+
+    # Header Row
     head_col1, head_col2 = st.columns([4, 1])
     with head_col1:
         st.subheader(header_title)
@@ -290,8 +356,10 @@ def render_main_app():
             st.session_state["active_conv_id"] = None
             st.session_state["active_conv_name"] = None
             st.session_state["active_other_user_id"] = None
+            st.session_state["active_other_username"] = None
             st.rerun()
 
+    # Group Settings (if group)
     if conv_type == "group":
         with st.expander("⚙️ Group Settings"):
             set_tab1, set_tab2 = st.columns([1, 1])
@@ -326,14 +394,29 @@ def render_main_app():
 
     st.divider()
 
+    # Real-time Message Stream Fragment (Smooth 3-second auto-poll)
     @st.fragment(run_every="3s")
-    def render_messages_stream(c_id: str, me_id: str, other_uid: str | None):
+    def render_messages_stream(c_id: str, me_id: str, other_uid: str | None, conv_kind: str):
         c_client = get_client()
+
+        # 1. Maintain my active presence in Redis
+        c_client.heartbeat()
+
+        # 2. Check other user presence (live auto-updated every 3s)
+        other_is_online = False
+        last_seen_val = None
+        if conv_kind == "direct" and other_uid:
+            p_data = c_client.get_presence(other_uid)
+            other_is_online = bool(p_data.get("is_online"))
+            last_seen_val = p_data.get("last_seen")
+
+        # 3. Fetch typing indicators
         typing_users = c_client.get_typing(c_id)
         if typing_users:
             names = ", ".join(typing_users)
             st.info(f"✍️ **{names}** is typing...")
 
+        # 4. Fetch messages
         try:
             msg_res = c_client.get_messages(c_id, limit=50)
             messages = list(reversed(msg_res.get("messages", [])))
@@ -341,28 +424,68 @@ def render_main_app():
             st.caption("Connecting to message feed...")
             return
 
+        # 5. Smart presence fallback: If other user sent a message in the last 60s, they are active
+        incoming_msgs = [m for m in messages if str(m.get("sender_id")) != me_id]
+        if not other_is_online and incoming_msgs:
+            latest_inc_time = incoming_msgs[-1].get("created_at")
+            if latest_inc_time:
+                try:
+                    dt = datetime.fromisoformat(latest_inc_time.replace("Z", "+00:00"))
+                    if (datetime.now(dt.tzinfo) - dt).total_seconds() < 60:
+                        other_is_online = True
+                except Exception:
+                    pass
+
+        # Live Status Banner inside the stream (auto-updates every 3s)
+        if conv_kind == "direct":
+            if other_is_online:
+                st.caption("🟢 **Status:** Active now")
+            else:
+                st.caption(f"⚪ **Status:** {format_last_seen(last_seen_val)}")
+
         if not messages:
             st.info("No messages yet. Say hello!")
 
+        # 6. Render each message
         for msg in messages:
             sender_id = str(msg.get("sender_id"))
             is_me = (sender_id == me_id)
             deleted = msg.get("deleted_at") is not None
             text = "*This message was deleted*" if deleted else (msg.get("content") or "")
             time_label = format_timestamp(msg.get("created_at"))
+            msg_created = msg.get("created_at", "")
 
+            # Check if there is an incoming message replied AFTER this message
+            has_subsequent_incoming = False
+            if is_me and incoming_msgs and msg_created:
+                for inc in incoming_msgs:
+                    if inc.get("created_at", "") >= msg_created:
+                        has_subsequent_incoming = True
+                        break
+
+            # Resolve sender name (bulletproof fallback chain)
             if is_me:
                 sender_display = "You"
                 avatar = "🧑‍💻"
             else:
-                sender_display = msg.get("sender_username") or resolve_username(c_client, sender_id, "Participant")
+                other_fallback = (
+                    st.session_state.get("active_other_username")
+                    or (st.session_state.get("active_conv_name") or "").replace("👤 ", "").replace("👥 ", "")
+                )
+                sender_display = (
+                    msg.get("sender_username")
+                    or st.session_state["user_cache"].get(sender_id)
+                    or other_fallback
+                    or resolve_username(c_client, sender_id, "User")
+                )
                 avatar = "👤"
 
+            # Receipts for my own messages
             receipt_badge = ""
             if is_me and not deleted:
-                if msg.get("is_read"):
+                if msg.get("is_read") or has_subsequent_incoming:
                     receipt_badge = " · 👁️ Read"
-                elif msg.get("is_delivered"):
+                elif msg.get("is_delivered") or other_is_online:
                     receipt_badge = " · ✓✓ Delivered"
                 else:
                     receipt_badge = " · ✓ Sent"
@@ -372,20 +495,23 @@ def render_main_app():
                 st.write(text)
                 st.caption(f"{time_label}{receipt_badge}")
 
-        incoming = [m for m in messages if str(m.get("sender_id")) != me_id]
-        if incoming:
-            latest_incoming_id = str(incoming[-1]["id"])
+        # 7. Mark conversation as read
+        if incoming_msgs:
+            latest_incoming_id = str(incoming_msgs[-1]["id"])
             last_cached = st.session_state.get(f"last_read_{c_id}")
             if last_cached != latest_incoming_id:
                 c_client.mark_conversation_read(c_id, latest_incoming_id)
                 st.session_state[f"last_read_{c_id}"] = latest_incoming_id
 
-    render_messages_stream(active_id, my_id, other_user_id)
+    # Call the message stream
+    render_messages_stream(active_id, my_id, other_user_id, conv_type)
 
+    # Bottom Pinned Chat Input
     user_input = st.chat_input("Write a message...")
     if user_input:
         if user_input.strip():
             try:
+                # Notify typing stop & send message
                 client.set_typing(active_id, is_typing=False)
                 client.send_message(active_id, user_input.strip())
                 st.rerun()
@@ -393,6 +519,7 @@ def render_main_app():
                 st.error(f"Failed to send message: {e.detail}")
 
 
+# ----------------- App Entrypoint -----------------
 def main():
     if not st.session_state.get("access_token") or not st.session_state.get("current_user"):
         render_auth()

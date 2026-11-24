@@ -8,6 +8,7 @@ from app.config import settings
 from app.core.dependencies import get_current_user
 from app.core.rate_limit import enforce_rate_limit
 from app.database.dependencies import get_db
+from app.managers.presence_manager import PresenceManager
 from app.managers.session_manager import SessionManager
 from app.managers.user_manager import UserManager
 from app.models.user import User
@@ -91,6 +92,8 @@ async def login_user(
         user_id=user.id,
     )
 
+    await PresenceManager.record_user_active(user.id)
+
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -144,10 +147,12 @@ async def logout_user(
     payload: RefreshRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    await SessionManager.logout(
+    user_id = await SessionManager.logout(
         db=db,
         refresh_token=payload.refresh_token,
     )
+    if user_id:
+        await PresenceManager.record_user_offline(user_id)
 
     return {"message": "Logged out successfully"}
 
@@ -164,6 +169,7 @@ async def logout_all_devices(
         db=db,
         user_id=current_user.id,
     )
+    await PresenceManager.record_user_offline(current_user.id)
 
     return {
         "message": "Logged out from all devices",

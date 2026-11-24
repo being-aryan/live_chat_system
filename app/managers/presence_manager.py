@@ -23,6 +23,8 @@ class PresenceManager:
     GENERATION_KEY_PREFIX = "presence:user:"
     GENERATION_KEY_SUFFIX = ":generation"
     CLEANUP_CHANNEL = redis_pubsub_manager.CHANNEL
+    HTTP_PRESENCE_KEY_PREFIX = "presence:http:"
+    HTTP_TTL_SECONDS = 45
 
     CONNECT_SCRIPT = """
     local connection_key = KEYS[1]
@@ -319,6 +321,34 @@ class PresenceManager:
         return bool(result)
 
     @classmethod
+    async def record_user_active(cls, user_id: UUID) -> None:
+        try:
+            key = f"{cls.HTTP_PRESENCE_KEY_PREFIX}{user_id}"
+            now = int(time.time() * 1000)
+            expires_at = now + (cls.HTTP_TTL_SECONDS * 1000)
+            pipe = redis_client.pipeline()
+            pipe.set(key, "1", ex=cls.HTTP_TTL_SECONDS)
+            pipe.zadd(cls.GLOBAL_PRESENCE_KEY, {str(user_id): expires_at})
+            await pipe.execute()
+        except Exception:
+            logger.exception("Failed to record active presence for user %s", user_id)
+
+    @classmethod
+    async def record_user_offline(cls, user_id: UUID) -> None:
+        try:
+            key = f"{cls.HTTP_PRESENCE_KEY_PREFIX}{user_id}"
+            conn_key = cls._get_connection_key(user_id)
+            pipe = redis_client.pipeline()
+            pipe.delete(key)
+            pipe.delete(conn_key)
+            pipe.zrem(cls.GLOBAL_PRESENCE_KEY, str(user_id))
+            pipe.zrem(cls.PENDING_OFFLINE_KEY, str(user_id))
+            await pipe.execute()
+            await cls.mark_user_offline(user_id, datetime.now(UTC))
+        except Exception:
+            logger.exception("Failed to record offline presence for user %s", user_id)
+
+    @classmethod
     async def is_user_online(cls, user_id: UUID) -> bool:
         now = int(time.time() * 1000)
 
@@ -329,7 +359,11 @@ class PresenceManager:
             now,
         )
 
-        return connection_count > 0
+        if connection_count > 0:
+            return True
+
+        http_active = await redis_client.exists(f"{cls.HTTP_PRESENCE_KEY_PREFIX}{user_id}")
+        return bool(http_active)
 
     @classmethod
     async def cleanup_expired_users(

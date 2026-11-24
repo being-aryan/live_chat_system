@@ -101,13 +101,17 @@ class RedisPubSubManager:
                     await self._process_event(event["data"])
 
                 if not self._stopping:
-                    logger.warning("Redis Pub/Sub listener disconnected")
+                    logger.warning(
+                        "Redis Pub/Sub listener disconnected"
+                    )
 
             except asyncio.CancelledError:
                 raise
 
             except RedisError:
-                logger.exception("Redis Pub/Sub connection failed")
+                logger.exception(
+                    "Redis Pub/Sub connection failed"
+                )
 
             finally:
                 if self.pubsub:
@@ -115,7 +119,9 @@ class RedisPubSubManager:
                         await self.pubsub.unsubscribe(self.CHANNEL)
                         await self.pubsub.aclose()
                     except RedisError:
-                        logger.exception("Error closing Redis Pub/Sub connection")
+                        logger.exception(
+                            "Error closing Redis Pub/Sub connection"
+                        )
                     finally:
                         self.pubsub = None
 
@@ -123,7 +129,8 @@ class RedisPubSubManager:
                 break
 
             connection_duration = (
-                asyncio.get_running_loop().time() - connection_started_at
+                asyncio.get_running_loop().time()
+                - connection_started_at
             )
 
             if connection_duration >= 60:
@@ -166,7 +173,9 @@ class RedisPubSubManager:
                 )
 
         except (ValueError, KeyError, TypeError):
-            logger.exception("Invalid Redis Pub/Sub event")
+            logger.exception(
+                "Invalid Redis Pub/Sub event"
+            )
 
 
 redis_pubsub_manager = RedisPubSubManager()
