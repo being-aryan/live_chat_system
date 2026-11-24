@@ -1,6 +1,18 @@
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from api_client import ChatAPIClient, APIError
+
+TIMEZONES = {
+    "Asia/Kolkata (IST +5:30)": "Asia/Kolkata",
+    "UTC (Coordinated Universal Time)": "UTC",
+    "America/New_York (US Eastern)": "America/New_York",
+    "America/Chicago (US Central)": "America/Chicago",
+    "America/Los_Angeles (US Pacific)": "America/Los_Angeles",
+    "Europe/London (GMT/BST)": "Europe/London",
+    "Asia/Dubai (GST +4:00)": "Asia/Dubai",
+    "Asia/Singapore (SGT +8:00)": "Asia/Singapore",
+}
 
 # Page setup
 st.set_page_config(
@@ -20,6 +32,16 @@ st.session_state.setdefault("active_other_user_id", None)
 st.session_state.setdefault("active_other_username", None)
 st.session_state.setdefault("user_cache", {})  # user_id -> username
 st.session_state.setdefault("last_read_cached", {})
+st.session_state.setdefault("display_timezone", "Asia/Kolkata (IST +5:30)")
+
+
+def get_current_zoneinfo() -> ZoneInfo:
+    tz_label = st.session_state.get("display_timezone", "Asia/Kolkata (IST +5:30)")
+    tz_key = TIMEZONES.get(tz_label, "Asia/Kolkata")
+    try:
+        return ZoneInfo(tz_key)
+    except Exception:
+        return ZoneInfo("Asia/Kolkata")
 
 
 def on_token_refresh(new_access: str, new_refresh: str):
@@ -39,8 +61,13 @@ def format_timestamp(dt_str: str | None) -> str:
     if not dt_str:
         return ""
     try:
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        return dt.astimezone().strftime("%I:%M %p · %b %d")
+        clean_str = dt_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        target_tz = get_current_zoneinfo()
+        local_dt = dt.astimezone(target_tz)
+        return local_dt.strftime("%I:%M %p · %b %d")
     except Exception:
         return str(dt_str)
 
@@ -49,8 +76,13 @@ def format_last_seen(dt_str: str | None) -> str:
     if not dt_str:
         return "Offline"
     try:
-        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-        return f"Last seen {dt.astimezone().strftime('%I:%M %p · %b %d')}"
+        clean_str = dt_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        target_tz = get_current_zoneinfo()
+        local_dt = dt.astimezone(target_tz)
+        return f"Last seen {local_dt.strftime('%I:%M %p · %b %d')}"
     except Exception:
         return "Offline"
 
@@ -158,6 +190,15 @@ def render_main_app():
             st.rerun()
 
         st.divider()
+
+        with st.expander("🌐 Timezone Settings", expanded=False):
+            current_choice = st.session_state.get("display_timezone", "Asia/Kolkata (IST +5:30)")
+            tz_names = list(TIMEZONES.keys())
+            idx = tz_names.index(current_choice) if current_choice in tz_names else 0
+            selected_tz = st.selectbox("Display Timezone", tz_names, index=idx, key="tz_select")
+            if selected_tz != current_choice:
+                st.session_state["display_timezone"] = selected_tz
+                st.rerun()
 
         # Start New Chat Modal / Expander
         with st.expander("➕ New Conversation"):
