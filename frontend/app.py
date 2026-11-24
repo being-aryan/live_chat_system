@@ -1,77 +1,369 @@
-import sys
-from pathlib import Path
-
 import streamlit as st
+from datetime import datetime
+from api_client import ChatAPIClient, APIError
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from frontend.config import APP_ICON, APP_TITLE
-from frontend.pages.dashboard import render_dashboard
-from frontend.pages.login import render_login
-from frontend.pages.register import render_register
-from frontend.api.client import APIError
-from frontend.services.auth import AuthService
-from frontend.services.websocket import WebSocketService
-
-
+# Page setup
 st.set_page_config(
-    page_title=APP_TITLE,
-    page_icon=APP_ICON,
+    page_title="Live Chat",
+    page_icon="💬",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
+# ----------------- Session State Initialization -----------------
+st.session_state.setdefault("access_token", None)
+st.session_state.setdefault("refresh_token", None)
+st.session_state.setdefault("current_user", None)
+st.session_state.setdefault("active_conv_id", None)
+st.session_state.setdefault("active_conv_name", None)
+st.session_state.setdefault("last_read_cached", {})
 
-def load_styles() -> None:
-    from pathlib import Path
 
-    css_path = Path(__file__).parent / "styles" / "main.css"
-    if css_path.exists():
-        st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)
+def on_token_refresh(new_access: str, new_refresh: str):
+    st.session_state["access_token"] = new_access
+    st.session_state["refresh_token"] = new_refresh
 
 
-load_styles()
+def get_client() -> ChatAPIClient:
+    return ChatAPIClient(
+        access_token=st.session_state.get("access_token"),
+        refresh_token=st.session_state.get("refresh_token"),
+        on_tokens_refreshed=on_token_refresh,
+    )
 
-if "page" not in st.session_state:
-    st.session_state["page"] = "dashboard" if st.session_state.get("access_token") else "login"
 
-auth_service = AuthService(st.session_state)
-
-if auth_service.is_authenticated():
+def format_timestamp(dt_str: str | None) -> str:
+    if not dt_str:
+        return ""
     try:
-        st.session_state["current_user"] = auth_service.get_current_user()
-    except APIError:
-        auth_service.clear_session()
-        st.session_state["page"] = "login"
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        return dt.astimezone().strftime("%I:%M %p · %b %d")
+    except Exception:
+        return str(dt_str)
 
-if auth_service.is_authenticated():
-    if "websocket_service" not in st.session_state:
-        websocket_service = WebSocketService(
-            st.session_state["access_token"],
-            st.session_state["refresh_token"],
-        )
-        websocket_service.start()
-        st.session_state["websocket_service"] = websocket_service
-    elif st.session_state["websocket_service"].access_token != st.session_state["access_token"]:
-        st.session_state["websocket_service"].stop()
-        websocket_service = WebSocketService(
-            st.session_state["access_token"],
-            st.session_state["refresh_token"],
-        )
-        websocket_service.start()
-        st.session_state["websocket_service"] = websocket_service
-else:
-    old_service = st.session_state.pop("websocket_service", None)
-    if old_service:
-        old_service.stop()
 
-page = st.session_state.get("page", "login")
-if page == "register":
-    render_register(auth_service)
-elif page == "dashboard" and auth_service.is_authenticated():
-    render_dashboard(auth_service)
-else:
-    st.session_state["page"] = "login"
-    render_login(auth_service)
+# ----------------- Authentication Views -----------------
+def render_auth():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("💬 Live Chat System")
+        st.caption("A fast, production-ready real-time communication platform.")
+
+        tab_login, tab_register = st.tabs(["🔑 Login", "✨ Register"])
+
+        client = get_client()
+
+        with tab_login:
+            st.subheader("Welcome Back")
+            with st.form("login_form", clear_on_submit=False):
+                email = st.text_input("Email", placeholder="user@example.com").strip()
+                password = st.text_input("Password", type="password")
+                submit_login = st.form_submit_button("Sign In", use_container_width=True, type="primary")
+
+            if submit_login:
+                if not email or not password:
+                    st.error("Please provide both email and password.")
+                else:
+                    try:
+                        tokens = client.login(email, password)
+                        st.session_state["access_token"] = tokens["access_token"]
+                        st.session_state["refresh_token"] = tokens["refresh_token"]
+
+                        user_client = get_client()
+                        st.session_state["current_user"] = user_client.get_me()
+                        st.success("Successfully logged in!")
+                        st.rerun()
+                    except APIError as e:
+                        st.error(f"Login failed: {e.detail}")
+
+        with tab_register:
+            st.subheader("Create a New Account")
+            with st.form("register_form", clear_on_submit=False):
+                username = st.text_input("Username", placeholder="e.g. john_doe").strip()
+                reg_email = st.text_input("Email address", placeholder="john@example.com").strip()
+                reg_password = st.text_input("Password (min 8 chars)", type="password")
+                reg_confirm = st.text_input("Confirm Password", type="password")
+                submit_register = st.form_submit_button("Sign Up", use_container_width=True)
+
+            if submit_register:
+                if not username or not reg_email or not reg_password:
+                    st.error("All fields are required.")
+                elif len(username) < 3:
+                    st.error("Username must be at least 3 characters.")
+                elif len(reg_password) < 8:
+                    st.error("Password must be at least 8 characters.")
+                elif reg_password != reg_confirm:
+                    st.error("Passwords do not match.")
+                else:
+                    try:
+                        client.register(username, reg_email, reg_password)
+                        st.success("Account created successfully! Please log in above.")
+                    except APIError as e:
+                        st.error(f"Registration failed: {e.detail}")
+
+
+# ----------------- Logged In Main Application -----------------
+def render_main_app():
+    client = get_client()
+    user = st.session_state.get("current_user", {})
+
+    # ===================== SIDEBAR =====================
+    with st.sidebar:
+        # Profile Section
+        st.subheader(f"👤 {user.get('username', 'My Account')}")
+        st.caption(f"{user.get('email', '')}")
+
+        col_ref, col_logout = st.columns([1, 1])
+        if col_ref.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+        if col_logout.button("🚪 Logout", use_container_width=True):
+            if st.session_state.get("refresh_token"):
+                client.logout(st.session_state["refresh_token"])
+            st.session_state.clear()
+            st.rerun()
+
+        st.divider()
+
+        # Start New Chat Modal / Expander
+        with st.expander("➕ New Conversation"):
+            tab_direct, tab_group = st.tabs(["Direct Chat", "Group Chat"])
+
+            with tab_direct:
+                search_q = st.text_input("Find User", placeholder="Type username...", key="direct_search")
+                if len(search_q.strip()) >= 2:
+                    try:
+                        results = client.search_users(search_q.strip())
+                        if not results:
+                            st.caption("No users found.")
+                        for u in results:
+                            col_u, col_btn = st.columns([3, 1])
+                            col_u.write(f"**{u['username']}**")
+                            if col_btn.button("Chat", key=f"start_{u['id']}"):
+                                try:
+                                    conv = client.create_direct_conversation(str(u["id"]))
+                                    st.session_state["active_conv_id"] = str(conv["id"])
+                                    st.session_state["active_conv_name"] = u["username"]
+                                    st.rerun()
+                                except APIError as err:
+                                    st.error(err.detail)
+                    except APIError as err:
+                        st.error(err.detail)
+
+            with tab_group:
+                group_name = st.text_input("Group Name", placeholder="Engineering Team", key="grp_name")
+                member_search = st.text_input("Search Members", placeholder="Find user...", key="grp_search")
+                selected_ids = st.session_state.setdefault("new_group_selected_ids", [])
+
+                if len(member_search.strip()) >= 2:
+                    try:
+                        m_results = client.search_users(member_search.strip())
+                        for cand in m_results:
+                            cand_id = str(cand["id"])
+                            is_checked = cand_id in selected_ids
+                            if st.checkbox(cand["username"], value=is_checked, key=f"cand_{cand_id}"):
+                                if cand_id not in selected_ids:
+                                    selected_ids.append(cand_id)
+                            else:
+                                if cand_id in selected_ids:
+                                    selected_ids.remove(cand_id)
+                    except APIError as err:
+                        st.error(err.detail)
+
+                st.caption(f"Selected members: {len(selected_ids)}")
+                if st.button("Create Group", type="primary", use_container_width=True):
+                    if not group_name.strip():
+                        st.warning("Please provide a group name.")
+                    elif not selected_ids:
+                        st.warning("Please select at least one member.")
+                    else:
+                        try:
+                            created_grp = client.create_group_conversation(group_name.strip(), selected_ids)
+                            st.session_state["active_conv_id"] = str(created_grp["id"])
+                            st.session_state["active_conv_name"] = group_name.strip()
+                            st.session_state["new_group_selected_ids"] = []
+                            st.success("Group created!")
+                            st.rerun()
+                        except APIError as err:
+                            st.error(err.detail)
+
+        st.divider()
+
+        # Inbox Conversations List
+        st.markdown("### 💬 Conversations")
+        try:
+            inbox_items = client.get_inbox()
+            if not inbox_items:
+                st.caption("No conversations yet. Start one above!")
+
+            for item in inbox_items:
+                conv = item.get("conversation", {})
+                conv_id = str(conv.get("id"))
+                conv_type = conv.get("conversation_type", "direct")
+                unread = int(item.get("unread_count", 0))
+
+                # Display name
+                if conv.get("name"):
+                    display_name = f"👥 {conv['name']}"
+                elif conv_type == "group":
+                    display_name = "👥 Group Chat"
+                else:
+                    display_name = "👤 Direct Chat"
+
+                # Button label with unread indicator
+                badge = f" 🔴 {unread}" if unread > 0 else ""
+                snippet = item.get("last_message_content") or "No messages yet"
+                if len(snippet) > 30:
+                    snippet = snippet[:28] + "..."
+
+                btn_label = f"{display_name}{badge}\n↳ {snippet}"
+                is_selected = (conv_id == st.session_state.get("active_conv_id"))
+
+                if st.button(
+                    btn_label,
+                    key=f"inbox_{conv_id}",
+                    use_container_width=True,
+                    type="primary" if is_selected else "secondary",
+                ):
+                    st.session_state["active_conv_id"] = conv_id
+                    st.session_state["active_conv_name"] = display_name
+                    st.rerun()
+
+        except APIError as e:
+            st.error(f"Failed to load conversations: {e.detail}")
+
+    # ===================== MAIN CHAT WORKSPACE =====================
+    active_id = st.session_state.get("active_conv_id")
+    if not active_id:
+        st.title(f"👋 Welcome, {user.get('username', 'there')}!")
+        st.info("👈 Select a conversation from the sidebar or click **➕ New Conversation** to begin.")
+        st.markdown(
+            """
+            ### Features
+            - **Instant Direct & Group Messaging**: Create conversations with any active user.
+            - **Live History & Read Receipts**: Keep unread badges synchronized.
+            - **Keyset Pagination**: Smooth message history without pagination duplicates.
+            - **Secure Authentication**: Protected by Argon2 passwords and auto-refreshing JWTs.
+            """
+        )
+        return
+
+    # Load Active Conversation Details
+    try:
+        conv_details = client.get_conversation_details(active_id)
+    except APIError as e:
+        st.error(f"Failed to load conversation: {e.detail}")
+        st.session_state["active_conv_id"] = None
+        return
+
+    conv_type = conv_details.get("conversation_type", "direct")
+    conv_name = conv_details.get("name") or ("Group Chat" if conv_type == "group" else "Direct Chat")
+    members = conv_details.get("members", [])
+
+    # Header Row
+    head_col1, head_col2 = st.columns([4, 1])
+    with head_col1:
+        st.subheader(f"{'👥' if conv_type == 'group' else '👤'} {conv_name}")
+        st.caption(f"{len(members)} participant(s) · {conv_type.title()}")
+    with head_col2:
+        if st.button("Close Chat", use_container_width=True):
+            st.session_state["active_conv_id"] = None
+            st.session_state["active_conv_name"] = None
+            st.rerun()
+
+    # Group Settings (if group)
+    if conv_type == "group":
+        with st.expander("⚙️ Group Settings"):
+            set_tab1, set_tab2 = st.columns([1, 1])
+            with set_tab1:
+                new_title = st.text_input("Rename Group", value=conv_details.get("name") or "")
+                if st.button("Save Name"):
+                    try:
+                        client.rename_group(active_id, new_title.strip())
+                        st.success("Group renamed!")
+                        st.rerun()
+                    except APIError as err:
+                        st.error(err.detail)
+            with set_tab2:
+                add_user_q = st.text_input("Add Member (User ID)", placeholder="Enter User UUID")
+                if st.button("Add Member"):
+                    try:
+                        client.add_group_member(active_id, add_user_q.strip())
+                        st.success("Member added!")
+                        st.rerun()
+                    except APIError as err:
+                        st.error(err.detail)
+
+            st.divider()
+            if st.button("🚪 Leave Group", type="primary"):
+                try:
+                    client.leave_group(active_id)
+                    st.session_state["active_conv_id"] = None
+                    st.session_state["active_conv_name"] = None
+                    st.rerun()
+                except APIError as err:
+                    st.error(err.detail)
+
+    st.divider()
+
+    # Real-time Message Stream Fragment (Smooth 4-second auto-poll without full page flash)
+    @st.fragment(run_every="4s")
+    def render_messages_stream(c_id: str, my_id: str):
+        c_client = get_client()
+        try:
+            msg_res = c_client.get_messages(c_id, limit=50)
+            messages = list(reversed(msg_res.get("messages", [])))
+        except APIError:
+            st.caption("Connecting to message feed...")
+            return
+
+        if not messages:
+            st.info("No messages yet. Say hello!")
+
+        # Render each chat message using native Streamlit chat bubbles
+        for msg in messages:
+            sender_id = str(msg.get("sender_id"))
+            is_me = (sender_id == my_id)
+            deleted = msg.get("deleted_at") is not None
+            text = "*This message was deleted*" if deleted else (msg.get("content") or "")
+            time_label = format_timestamp(msg.get("created_at"))
+
+            role = "user" if is_me else "assistant"
+            avatar = "🧑‍💻" if is_me else "👤"
+
+            with st.chat_message(role, avatar=avatar):
+                st.write(text)
+                st.caption(time_label)
+
+        # Mark conversation read (single clean bulk call, only when newest unread arrived)
+        incoming = [m for m in messages if str(m.get("sender_id")) != my_id]
+        if incoming:
+            latest_incoming_id = str(incoming[-1]["id"])
+            last_cached = st.session_state.get(f"last_read_{c_id}")
+            if last_cached != latest_incoming_id:
+                c_client.mark_conversation_read(c_id, latest_incoming_id)
+                st.session_state[f"last_read_{c_id}"] = latest_incoming_id
+
+    # Call the message stream
+    render_messages_stream(active_id, str(user.get("id")))
+
+    # Bottom Pinned Chat Input
+    user_input = st.chat_input("Write a message...")
+    if user_input:
+        if user_input.strip():
+            try:
+                client.send_message(active_id, user_input.strip())
+                st.rerun()
+            except APIError as e:
+                st.error(f"Failed to send message: {e.detail}")
+
+
+# ----------------- App Entrypoint -----------------
+def main():
+    if not st.session_state.get("access_token") or not st.session_state.get("current_user"):
+        render_auth()
+    else:
+        render_main_app()
+
+
+if __name__ == "__main__":
+    main()
