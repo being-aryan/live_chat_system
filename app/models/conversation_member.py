@@ -73,5 +73,8 @@ class ConversationMember(Base):
 
     @property
     def username(self) -> str | None:
-        return self.user.username if self.user else None
+        try:
+            return self.user.username if self.user else None
+        except Exception:
+            return None
 

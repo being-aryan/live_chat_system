@@ -27,7 +27,9 @@ class MessageRepository:
         message_id: UUID,
     ) -> Message | None:
         result = await db.execute(
-            select(Message).where(
+            select(Message)
+            .options(selectinload(Message.sender), selectinload(Message.receipts))
+            .where(
                 Message.id == message_id,
             )
         )

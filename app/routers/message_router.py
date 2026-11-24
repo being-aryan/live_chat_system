@@ -79,7 +79,18 @@ async def create_message(
                 "Message %s saved but realtime publish failed",
                 message.id,
             )
-        return message
+        return MessageResponse(
+            id=message.id,
+            conversation_id=message.conversation_id,
+            sender_id=message.sender_id,
+            sender_username=current_user.username,
+            content=message.content,
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+            deleted_at=message.deleted_at,
+            is_delivered=False,
+            is_read=False,
+        )
     except ValueError as exc:
         error_message = str(exc)
         error_status = (
@@ -184,7 +195,18 @@ async def update_message(
                 "Message %s updated but realtime publish failed",
                 message.id,
             )
-        return message
+        return MessageResponse(
+            id=message.id,
+            conversation_id=message.conversation_id,
+            sender_id=message.sender_id,
+            sender_username=current_user.username,
+            content=message.content,
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+            deleted_at=message.deleted_at,
+            is_delivered=False,
+            is_read=False,
+        )
     except ValueError as exc:
         error_message = str(exc)
         error_status = (

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.managers.presence_manager import PresenceManager
@@ -80,7 +81,12 @@ class MessageManager:
             )
 
             await db.commit()
-            await db.refresh(message)
+            refreshed = await db.execute(
+                select(Message)
+                .options(selectinload(Message.sender), selectinload(Message.receipts))
+                .where(Message.id == message.id)
+            )
+            message = refreshed.scalar_one()
             await PresenceManager.record_user_active(current_user_id)
 
             return message
@@ -201,7 +207,12 @@ class MessageManager:
             )
 
             await db.commit()
-            await db.refresh(message)
+            refreshed = await db.execute(
+                select(Message)
+                .options(selectinload(Message.sender), selectinload(Message.receipts))
+                .where(Message.id == message.id)
+            )
+            message = refreshed.scalar_one()
             await PresenceManager.record_user_active(current_user_id)
 
             return message
@@ -257,7 +268,12 @@ class MessageManager:
             )
 
             await db.commit()
-            await db.refresh(message)
+            refreshed = await db.execute(
+                select(Message)
+                .options(selectinload(Message.sender), selectinload(Message.receipts))
+                .where(Message.id == message.id)
+            )
+            message = refreshed.scalar_one()
             await PresenceManager.record_user_active(current_user_id)
 
             return message
