@@ -98,6 +98,20 @@ class ChatAPIClient:
             json={"username": username, "email": email, "password": password},
         )
 
+    def verify_email(self, email: str, otp: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/auth/verify-email",
+            json={"email": email, "otp": otp},
+        )
+
+    def resend_verification(self, email: str) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/auth/resend-verification",
+            json={"email": email},
+        )
+
     def login(self, email: str, password: str) -> dict[str, Any]:
         return self._request(
             "POST",

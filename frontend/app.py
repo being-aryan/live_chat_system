@@ -26,6 +26,7 @@ st.set_page_config(
 st.session_state.setdefault("access_token", None)
 st.session_state.setdefault("refresh_token", None)
 st.session_state.setdefault("current_user", None)
+st.session_state.setdefault("pending_verification_email", "")
 st.session_state.setdefault("active_conv_id", None)
 st.session_state.setdefault("active_conv_name", None)
 st.session_state.setdefault("active_other_user_id", None)
@@ -112,7 +113,9 @@ def render_auth():
         st.title("💬 Live Chat System")
         st.caption("A fast, production-ready real-time communication platform.")
 
-        tab_login, tab_register = st.tabs(["🔑 Login", "✨ Register"])
+        tab_login, tab_register, tab_verify = st.tabs(
+            ["🔑 Login", "✨ Register", "📧 Verify Email"]
+        )
 
         client = get_client()
 
@@ -139,7 +142,10 @@ def render_auth():
                         st.success("Successfully logged in!")
                         st.rerun()
                     except APIError as e:
-                        st.error(f"Login failed: {e.detail}")
+                        if e.status_code == 403:
+                            st.warning("Please verify your email before logging in. Open the Verify Email tab.")
+                        else:
+                            st.error(f"Login failed: {e.detail}")
 
         with tab_register:
             st.subheader("Create a New Account")
@@ -162,9 +168,59 @@ def render_auth():
                 else:
                     try:
                         client.register(username, reg_email, reg_password)
-                        st.success("Account created successfully! Please log in above.")
+                        st.session_state["pending_verification_email"] = reg_email
+                        st.success("Account created. A verification code has been sent to your email. Open the Verify Email tab.")
                     except APIError as e:
-                        st.error(f"Registration failed: {e.detail}")
+                        if e.status_code == 503:
+                            st.session_state["pending_verification_email"] = reg_email
+                            st.warning(f"{e.detail} You can request another code from the Verify Email tab.")
+                        else:
+                            st.error(f"Registration failed: {e.detail}")
+
+        with tab_verify:
+            st.subheader("Verify your email address")
+            with st.form("verify_email_form", clear_on_submit=False):
+                verify_email = st.text_input(
+                    "Email address",
+                    value=st.session_state.get("pending_verification_email", ""),
+                    placeholder="you@example.com",
+                ).strip()
+                otp_value = st.text_input(
+                    "Six-digit verification code",
+                    max_chars=6,
+                    placeholder="123456",
+                ).strip()
+                submit_verification = st.form_submit_button(
+                    "Verify Email",
+                    use_container_width=True,
+                    type="primary",
+                )
+
+            if submit_verification:
+                if not verify_email or len(otp_value) != 6 or not otp_value.isdigit():
+                    st.error("Enter a valid email address and six-digit code.")
+                else:
+                    try:
+                        client.verify_email(verify_email, otp_value)
+                        st.session_state["pending_verification_email"] = verify_email
+                        st.success("Email verified successfully. You can now log in.")
+                    except APIError as e:
+                        st.error(f"Verification failed: {e.detail}")
+
+            resend_email = st.text_input(
+                "Email for a new code",
+                value=st.session_state.get("pending_verification_email", ""),
+                key="resend_verification_email",
+            ).strip()
+            if st.button("Resend verification code", use_container_width=True):
+                if not resend_email:
+                    st.error("Enter your email address first.")
+                else:
+                    try:
+                        client.resend_verification(resend_email)
+                        st.success("If verification is pending, a new code will be sent when available.")
+                    except APIError as e:
+                        st.error(f"Could not request a new code: {e.detail}")
 
 
 # ----------------- Logged In Main Application -----------------
